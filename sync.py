@@ -139,7 +139,7 @@ def getAllLocalTracks(cleanCache=False):
                             album = album.strip()
                         if title:
                             title = title.strip()
-                        if not title:
+                        if not title or not artist: # both tags are required, files to be fixed are diplayed
                             print("no tags for " + filePath)
                         else:
                             track = Track()
