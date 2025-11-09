@@ -7,6 +7,7 @@ from ordered_set import OrderedSet
 import json
 import os
 import sys
+import logging
 
 from track import Track
 from getch import getch
@@ -14,9 +15,11 @@ from getch import getch
 SUPPORTED_EXTS = [".mp3", ".m4a", ".ogg", ".flac", ".wma"]
 LOCAL_CACHE_JSON = "local_cache.json"
 UPLOADED_CACHE_JSON = "library_cache.json"
+LOGGER = "sync.log"
 
 
 def setup():
+    # Setup YTMusic API
     global ytmusic
     # https://ytmusicapi.readthedocs.io/en/stable/setup/browser.html#using-the-headers-in-your-project
     # generate the browser.json file with: 'ytmusicapi browser' and paste "Request Headers" from Firefox dev interface on :
@@ -25,6 +28,21 @@ def setup():
     # -> Status 200, Method POST, Domain music.youtube.com, File browse?..
     # -> Right click -> Copy Value -> Copy request headers
     ytmusic = ytmusicapi.YTMusic('browser.json')
+
+    # Setup logging
+    global logger
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)  # capture everything here; handlers decide what to output
+    # File handler: save INFO+ in the log file
+    file_handler = logging.FileHandler(LOGGER, mode='w', encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(levelname)-7s: %(message)s'))
+    logger.addHandler(file_handler)
+    # Console handler: display INFO+ on console
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    console.setFormatter(logging.Formatter('%(levelname)-7s: %(message)s'))
+    logger.addHandler(console)
 
 
 def dumpToCache(tracks,filename):
@@ -47,7 +65,7 @@ def loadCache(filename):
 def getAllUploadedTracks(cleanCache=False):
     tracksSet = OrderedSet()
     if not os.path.exists(UPLOADED_CACHE_JSON) or cleanCache:
-        print("Fetching list of uploaded songs. For a lot of songs, this may take a long time...")
+        logger.info("Fetching list of uploaded songs. For a lot of songs, this may take a long time...")
         tracks = ytmusic.get_library_upload_songs(limit=100000)
         for yttrack in tracks:
             track = Track()
@@ -59,16 +77,16 @@ def getAllUploadedTracks(cleanCache=False):
             track.entityId = yttrack["entityId"]
             tracksSet.add(track)
             dumpToCache(tracksSet,UPLOADED_CACHE_JSON)
-        print("UploadedTracks cached to " + UPLOADED_CACHE_JSON)
+        logger.info("UploadedTracks cached to " + UPLOADED_CACHE_JSON)
     else:
-        print("using " + UPLOADED_CACHE_JSON)
+        logger.info("using " + UPLOADED_CACHE_JSON)
         tracksSet = loadCache(UPLOADED_CACHE_JSON)
     return tracksSet
 
 
 def getAllLocalTracks(cleanCache=False):
     if not os.path.exists(LOCAL_CACHE_JSON) or cleanCache:
-        print("Reading tags from local files...")
+        logger.info("Reading tags from local files...")
         folders = []
         tracks = OrderedSet()
         with open("folders.json", "r") as foldersJson:
@@ -83,10 +101,10 @@ def getAllLocalTracks(cleanCache=False):
                         try:
                             metadata = mutagen.File(filePath)
                         except mutagen.MutagenError as e:
-                            print(f"{filename}: {e}")
+                            logger.warning(f"{filename}: {e}")
                             continue
                         if not metadata:
-                            print("no tags for " + filePath)
+                            logger.warning("no tags for " + filePath)
                             continue
                         artist = None
                         album = None
@@ -139,8 +157,8 @@ def getAllLocalTracks(cleanCache=False):
                             album = album.strip()
                         if title:
                             title = title.strip()
-                        if not title or not artist: # both tags are required, files to be fixed are diplayed
-                            print("no tags for " + filePath)
+                        if not title:
+                            logger.warning("no tags for " + filePath)
                         else:
                             track = Track()
                             track.artist = artist
@@ -149,18 +167,18 @@ def getAllLocalTracks(cleanCache=False):
                             track.filePath = filePath
                             tracks.add(track)
         dumpToCache(tracks,LOCAL_CACHE_JSON)
-        print("Local Tracks cached to " + LOCAL_CACHE_JSON)
+        logger.info("Local Tracks cached to " + LOCAL_CACHE_JSON)
     else:
-        print("using local_cache.json")
+        logger.info("using local_cache.json")
         tracks = loadCache(LOCAL_CACHE_JSON)
 
     return tracks
 
 
 def confirm(msg):
-    print(msg + " [y/N]: ", end="", flush=True)
+    logger.info(msg + " [y/N]: ") # , end="", flush=True)
     ch = getch()
-    print(ch)
+    logger.info(ch)
     if ch == '\x03':
         raise KeyboardInterrupt
     return ch == 'y' or ch == 'Y'
@@ -175,47 +193,49 @@ def deleteTracks(tracks):
         else:
             confirmAll = True
         for track in tracks:
-            print("Delete " + str(track.artist) + " - " + str(track.title) +
-                  " [" + str(track.album) + "]", end="")
+            logger.info("To Delete: " + str(track.artist) + " - " + str(track.title) + " [" + str(track.album) + "]")
             if confirmAll or confirm("?"):
-                if confirmAll:
-                    print()
                 if track.entityId:
                     ytmusic.delete_upload_entity(track.entityId)
                     deletedTracks.add(track)
+                    logger.info("Deleted: " + str(track.artist) + " - " + str(track.title) + " [" + str(track.album) + "]")
                 else:
-                    print("No entity id for this. You may want to rebuild cache (-rc)")
+                    logger.warning("No entity id for this. You may want to rebuild cache (-rc)")
     except:
         pass
     return deletedTracks
 
 
 def uploadTracks(tracks, uploadedTracks):
-    print("Will upload " + str(len(tracks)) + " songs")
+    logger.info("Will upload " + str(len(tracks)) + " songs")
     i = 0
     for track in tracks:
         try:
-            print("Uploading " + track.filePath + " " +
+            logger.info("Uploading " + track.filePath + " " +
                   str(round(i * 100 / len(tracks), 2)) + "% " +
                   "(" + str(i + 1) + " / " + str(len(tracks)) + ")")
             res = ytmusic.upload_song(track.filePath)
             if res != 'STATUS_SUCCEEDED':
                 if res.status_code == 401:
-                    print("unauthorized")
+                    logger.warning("unauthorized")
                     break
-                elif res.status_code != 409:
-                    # may fail with 409 (duplicate), which is a success
-                    print("failed", res)
+                elif res.status_code == 409:
+                    logger.warning("duplicated: " + track.filePath)
+                    continue
+                else:
+                    logger.warning("failed: " + track.filePath + ", with result: " + str(res))
                     continue
             uploadedTracks.add(track)
-            # print(track.toDict())
+            logger.debug(track.toDict())
             i += 1
         except KeyboardInterrupt:
             break
         except Exception as e:
-            print("Exception: ", str(e))
+            logger.warning(str(e))
+            continue
         except:
-            print("Unexpected error:", sys.exc_info()[0])
+            logger.error(sys.exc_info()[0])
+            continue
 
     return uploadedTracks
 
@@ -227,19 +247,19 @@ if __name__ == "__main__":
         cleanCache =  ("--rebuild-cache" in sys.argv or "-rc" in sys.argv)
         uploadedTracks = getAllUploadedTracks(cleanCache=cleanCache)
         localTracks = getAllLocalTracks(cleanCache=cleanCache)
-        print("=> Local tracks: " + str(len(localTracks)))
-        print("=> Uploaded tracks: " + str(len(uploadedTracks)))
+        logger.info("=> Local tracks: " + str(len(localTracks)))
+        logger.info("=> Uploaded tracks: " + str(len(uploadedTracks)))
 
         # Delete tracks if required
         tracksToDelete = uploadedTracks - localTracks
         if ("--delete" in sys.argv or "-d" in sys.argv) and len(tracksToDelete) > 0:
-            print("==> To delete: " + str(len(tracksToDelete)) + " songs")
+            logger.info("==> To delete: " + str(len(tracksToDelete)) + " songs")
             deletedTracks = deleteTracks(tracksToDelete)
             dumpToCache(uploadedTracks-deletedTracks, UPLOADED_CACHE_JSON)
     
         # Upload tracks       
         tracksToUpload = localTracks - uploadedTracks
-        print("==> To upload: " + str(len(tracksToUpload)))
+        logger.info("==> To upload: " + str(len(tracksToUpload)))
         if len(tracksToUpload) > 0:
             if sys.stdout.isatty():
                 startUpload = confirm("Start uploading?")
@@ -249,7 +269,7 @@ if __name__ == "__main__":
                 uploadedTracks = uploadTracks(tracksToUpload, uploadedTracks)
                 dumpToCache(uploadedTracks, UPLOADED_CACHE_JSON)
         else:
-            print("All local tracks are already uploaded.")
+            logger.info("All local tracks are already uploaded.")
     except:
-        print("Unexpected error:", sys.exc_info()[0])
+        logger.error(sys.exc_info()[0])
         raise
