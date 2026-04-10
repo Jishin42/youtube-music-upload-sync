@@ -4,5 +4,5 @@ library_cache*.json
 local_cache*.json
 __pycache__
 browser.json
-
 sync.log
+.vscode
