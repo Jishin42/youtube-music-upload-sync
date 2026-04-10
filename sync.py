@@ -22,12 +22,15 @@ def setup():
     # Setup YTMusic API
     global ytmusic
     # https://ytmusicapi.readthedocs.io/en/stable/setup/browser.html#using-the-headers-in-your-project
-    # generate the browser.json file with: 'ytmusicapi browser' and paste "Request Headers" from Firefox dev interface on :
-    # Website : music.youtube.com
-    # Firefox dev tools -> Network tab 
-    # -> Status 200, Method POST, Domain music.youtube.com, File browse?..
-    # -> Right click -> Copy Value -> Copy request headers
-    ytmusic = ytmusicapi.YTMusic('browser.json')
+    try:
+        ytmusic = ytmusicapi.YTMusic('browser.json')
+    except ytmusicapi.exceptions.YTMusicUserError as e:
+        print(f"Error: Invalid or missing browser.json file: {e}")
+        print("Generate it with: 'ytmusicapi browser':")
+        print("1) open dev interface on Firefox while on music.youtube.com")
+        print("2) right click on the request with status 200 and method POST to music.youtube.com/browse?... and copy request headers")
+        print("3) Then paste the headers in ytmusicapi's prompt")
+        sys.exit(1)
 
     # Setup logging
     global logger
